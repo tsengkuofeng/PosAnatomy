@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PosAnatomy - 雲端主控台</title>
+    <title>PosAnatomy - 手機 AR 透視鏡</title>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
 
@@ -11,196 +11,200 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
 
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #video { transform: scaleX(-1); width: 100vw; height: 100vh; object-fit: cover; opacity: 0.5; position: absolute; z-index: 1; }
+        /* 鏡頭畫面：滿版、不翻轉 (因為是後置鏡頭) */
+        #video { width: 100vw; height: 100vh; object-fit: cover; position: absolute; z-index: 1; top: 0; left: 0; }
+        /* 3D 畫布：疊在鏡頭上方，允許穿透點擊 */
         canvas { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; }
 
-        #disclaimer-modal {
+        #start-screen {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0, 0, 0, 0.9); z-index: 9999;
+            background: rgba(0, 0, 0, 0.85); z-index: 9999;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             color: white; text-align: center; padding: 20px; box-sizing: border-box;
-            backdrop-filter: blur(10px);
+            backdrop-filter: blur(5px);
         }
-        .modal-box {
-            background: rgba(30, 30, 30, 0.8); border: 1px solid gold; border-radius: 15px; padding: 30px; max-width: 450px;
-        }
-        .modal-box h2 { color: gold; margin-top: 0; letter-spacing: 2px; }
-        .modal-box p { font-size: 0.95rem; line-height: 1.6; color: #ddd; text-align: left;}
+        .modal-box { background: rgba(30, 30, 30, 0.9); border: 1px solid gold; border-radius: 15px; padding: 30px; width: 85%; max-width: 400px; }
+        .modal-box h2 { color: gold; margin-top: 0; }
+        .modal-box p { font-size: 0.9rem; line-height: 1.5; color: #ccc; text-align: left; }
 
         #start-btn {
-            background: gold; color: black; border: none; padding: 12px 30px; font-size: 1.1rem;
-            border-radius: 25px; cursor: pointer; font-weight: bold; margin-top: 20px; transition: 0.3s;
+            background: gold; color: black; border: none; padding: 15px 30px; font-size: 1.1rem;
+            border-radius: 25px; cursor: pointer; font-weight: bold; margin-top: 20px; width: 100%;
         }
-        #qr-container { display: none; margin-top: 15px; }
-        #qr-container img { border-radius: 10px; margin: 15px 0; border: 4px solid white; background: white; }
-        #loading-text { color: gold; font-size: 1rem; margin-top: 10px; font-weight: bold; animation: pulse 1.5s infinite; }
 
+        #loading-text { display: none; color: gold; font-weight: bold; margin-top: 15px; animation: pulse 1s infinite; }
+
+        /* 手機版底部控制列 */
         #controls {
             position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-            display: none; background: rgba(20, 20, 20, 0.7); padding: 10px 20px; border-radius: 30px;
-            z-index: 100; gap: 15px; border: 1px solid rgba(255,215,0,0.3);
-            display: flex; align-items: center; justify-content: center; width: max-content;
+            display: none; background: rgba(0, 0, 0, 0.6); padding: 12px; border-radius: 25px;
+            z-index: 100; gap: 10px; border: 1px solid rgba(255,215,0,0.4);
+            backdrop-filter: blur(5px); display: flex; flex-wrap: wrap; justify-content: center; width: 90%; max-width: 350px;
         }
-        .btn { background: transparent; color: white; border: 1px solid white; padding: 8px 15px; border-radius: 20px; cursor: pointer; transition: 0.3s; }
+        .btn { background: transparent; color: white; border: 1px solid white; padding: 10px 15px; border-radius: 20px; font-size: 0.9rem; transition: 0.3s; pointer-events: auto; }
         .btn.active { background: white; color: black; }
-        .btn-action { background: gold; color: black; border: none; font-weight: bold; }
-        .btn-record.recording { background: red; color: white; animation: pulse 1s infinite; }
 
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
 
-    <div id="disclaimer-modal">
+    <div id="start-screen">
         <div class="modal-box">
-            <h2>PosAnatomy 雲端實驗室</h2>
-            <div id="step-1">
-                <p><b>GitHub 版使用說明：</b><br>
-                • 透過 GitHub Pages 提供安全 HTTPS 連線。<br>
-                • 無需安裝任何 App，掃碼即可實現無線動捕。<br>
-                • 建議在光線充足環境下使用以獲得最佳準確度。</p>
-                <button id="start-btn">同意並開啟連線</button>
-            </div>
-
-            <div id="qr-container">
-                <p style="text-align:center; color:white; font-weight:bold;">📱 請用手機相機掃描下方條碼</p>
-                <img id="qr-image" src="" alt="QR Code" width="200" height="200" />
-                <p id="phone-url-text" style="font-size: 0.7rem; color: #888; word-break: break-all; margin-top:10px;"></p>
-                <div id="loading-text">等待手機影像傳入...</div>
-            </div>
+            <h2>📱 AR 解剖透視鏡</h2>
+            <p>1. 請允許瀏覽器使用相機權限。<br>
+               2. 使用<b>後置鏡頭</b>對準目標人物。<br>
+               3. 保持全身入鏡，光線明亮。<br>
+               ⚠️ <i>初次載入模型需約 10-20 秒，請耐心等候。</i></p>
+            <button id="start-btn">開啟相機與載入模型</button>
+            <div id="loading-text">資源載入中，請稍候...</div>
         </div>
     </div>
 
-    <div id="controls">
+    <div id="controls" style="display: none;">
         <button class="btn active" id="toggle-bone">🦴 骨骼</button>
         <button class="btn active" id="toggle-muscle">🥩 肌肉</button>
         <button class="btn active" id="toggle-nerve">⚡ 神經</button>
-        <div style="border-left: 1px solid #666; height: 20px; margin: 0 5px;"></div>
-        <button class="btn btn-action" id="btn-photo">📸 拍照</button>
-        <button class="btn btn-action btn-record" id="btn-video">🎥 錄影</button>
     </div>
 
     <video id="video" playsinline autoplay muted></video>
-    <canvas id="merge-canvas" style="display:none;"></canvas>
 
     <script>
         const videoElement = document.getElementById('video');
         const startBtn = document.getElementById('start-btn');
-        const modal = document.getElementById('disclaimer-modal');
-        const step1 = document.getElementById('step-1');
-        const qrContainer = document.getElementById('qr-container');
+        const startScreen = document.getElementById('start-screen');
         const controls = document.getElementById('controls');
+        const loadingText = document.getElementById('loading-text');
 
-        // 🟢 將模型分開儲存，並用一個 Group 包裝它們以便統一縮放
         const models = { bone: null, muscle: null, nerve: null };
         let showBone = true, showMuscle = true, showNerve = true;
-
-        let isRecording = false, mediaRecorder, recordedChunks = [];
         let pose, isPoseAnalyzing = false;
 
+        // --- Three.js 初始化 ---
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+        // 為了讓 AR 疊加更準確，我們根據手機螢幕比例設定相機
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 1.2));
-        const pointLight = new THREE.PointLight(0xffaa00, 1);
-        pointLight.position.set(5, 5, 5);
-        scene.add(pointLight);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xfff0dd, 1);
+        dirLight.position.set(0, 5, 5);
+        scene.add(dirLight);
+
         camera.position.z = 5;
 
-        // 🟢 建立一個大群組，用來承載三個系統
         const anatomyGroup = new THREE.Group();
         scene.add(anatomyGroup);
 
+        // --- 載入模型 ---
         function loadModels() {
             const loader = new THREE.GLTFLoader();
-
-            // 🟢 設定 DRACO 解碼器
             const dracoLoader = new THREE.DRACOLoader();
             dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
             loader.setDRACOLoader(dracoLoader);
 
+            let loadedCount = 0;
             const parts = ['bone', 'muscle', 'nerve'];
+
             parts.forEach(part => {
                 loader.load(`./${part}.glb`, (gltf) => {
                     const model = gltf.scene;
-                    models[part] = model; // 存入字典方便之後開關
-                    anatomyGroup.add(model); // 加入統一管理的群組
-                    console.log(`✅ ${part}.glb 載入成功!`);
+                    models[part] = model;
+                    anatomyGroup.add(model);
+                    loadedCount++;
+
+                    if(loadedCount === 3) {
+                        // 模型全數載入完畢，開啟相機
+                        loadingText.innerText = "模型載入完成！啟動相機中...";
+                        startCamera();
+                    }
                 }, undefined, (error) => {
-                    console.error(`❌ 載入 ${part}.glb 失敗:`, error);
+                    console.error(`載入 ${part}.glb 失敗:`, error);
+                    loadingText.innerText = `❌ 載入 ${part} 失敗`;
+                    loadingText.style.color = "red";
                 });
             });
         }
 
-        startBtn.addEventListener('click', () => {
-            step1.style.display = 'none';
-            qrContainer.style.display = 'block';
-            loadModels(); // 🟢 載入多個模型
-
-            const myPeerId = "posanatomy-" + Math.floor(Math.random() * 10000);
-            const peer = new Peer(myPeerId);
-
-            peer.on('open', (id) => {
-                const currentUrl = window.location.href.split('?')[0].split('#')[0];
-                const cleanUrl = currentUrl.endsWith('/') ? currentUrl.slice(0, -1) : currentUrl;
-                const phoneUrl = `${cleanUrl}/phone.html?target_id=${id}`;
-
-                document.getElementById('qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(phoneUrl)}`;
-                document.getElementById('phone-url-text').innerText = phoneUrl;
-            });
-
-            peer.on('call', (call) => {
-                call.answer();
-                call.on('stream', (remoteStream) => {
-                    videoElement.srcObject = remoteStream;
-                    videoElement.onloadedmetadata = () => {
-                        videoElement.play();
-                        modal.style.display = 'none';
-                        controls.style.display = 'flex';
-                        initPoseAnalysis();
-                    };
+        // --- 開啟後置相機 ---
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: false
                 });
-            });
-        });
+                videoElement.srcObject = stream;
 
+                videoElement.onloadedmetadata = () => {
+                    videoElement.play();
+                    startScreen.style.display = 'none';
+                    controls.style.display = 'flex';
+                    initPoseAnalysis(); // 開始 AI 辨識
+                };
+            } catch (err) {
+                alert("相機開啟失敗，請確認已給予權限！");
+                console.error(err);
+            }
+        }
+
+        // --- MediaPipe 初始化 ---
         function initPoseAnalysis() {
             if (isPoseAnalyzing) return;
             isPoseAnalyzing = true;
             pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+
+            // 手機版效能考量，Complexity 設為 0 或 1
             pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
             pose.onResults(onResults);
 
             async function step() {
-                if (videoElement.readyState >= 2) await pose.send({image: videoElement});
+                if (videoElement.readyState >= 2) {
+                    await pose.send({image: videoElement});
+                }
                 if (isPoseAnalyzing) requestAnimationFrame(step);
             }
             step();
         }
 
+        // --- 核心對位邏輯 (AR 追蹤) ---
         function onResults(results) {
-            if (!results.poseLandmarks || anatomyGroup.children.length === 0) return;
+            if (!results.poseLandmarks || anatomyGroup.children.length === 0) {
+                anatomyGroup.visible = false; // 沒抓到人就隱藏模型
+                return;
+            }
+            anatomyGroup.visible = true;
 
-            // 使用肩膀節點來定位
-            const left = results.poseLandmarks[11];
-            const right = results.poseLandmarks[12];
+            const landmarks = results.poseLandmarks;
+            // 11 = 左肩, 12 = 右肩 (以畫面方向來看)
+            const leftShoulder = landmarks[11];
+            const rightShoulder = landmarks[12];
 
-            // 🟢 對「整個群組」進行位移與縮放，確保骨骼/肌肉/神經不會分離
-            anatomyGroup.position.x = -((left.x + right.x) / 2 - 0.5) * 8;
-            anatomyGroup.position.y = -((left.y + right.y) / 2 - 0.5) * 6;
+            // 1. 計算中心點
+            const midX = (leftShoulder.x + rightShoulder.x) / 2;
+            const midY = (leftShoulder.y + rightShoulder.y) / 2;
 
-            const width = Math.sqrt(Math.pow(left.x - right.x, 2) + Math.pow(left.y - right.y, 2));
-            anatomyGroup.scale.set(width * 10, width * 10, width * 10);
-            anatomyGroup.rotation.z = Math.atan2(left.y - right.y, left.x - right.x);
+            // 2. 將 MediaPipe 座標 (0~1) 轉換為 Three.js 空間座標
+            // 這裡的乘數 (8, 6 等) 需根據你的模型原始大小做微調
+            const screenAspect = window.innerHeight / window.innerWidth;
+            anatomyGroup.position.x = (midX - 0.5) * 8;
+            anatomyGroup.position.y = -(midY - 0.5) * 8 * screenAspect;
+
+            // 3. 計算肩膀寬度來決定縮放比例
+            const shoulderWidth = Math.sqrt(Math.pow(leftShoulder.x - rightShoulder.x, 2) + Math.pow(leftShoulder.y - rightShoulder.y, 2));
+            const scaleFactor = shoulderWidth * 9.5; // 這裡的 9.5 是放大倍率，可自行微調
+            anatomyGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+            // 4. 計算身體傾斜角度
+            const angle = Math.atan2(rightShoulder.y - leftShoulder.y, rightShoulder.x - leftShoulder.x);
+            anatomyGroup.rotation.z = -angle;
         }
 
-        // 🟢 更新按鈕事件，分別控制三個模型
+        // --- 按鈕事件綁定 ---
         document.getElementById('toggle-bone').addEventListener('click', function() {
             showBone = !showBone; this.classList.toggle('active');
             if(models.bone) models.bone.visible = showBone;
@@ -214,51 +218,20 @@
             if(models.nerve) models.nerve.visible = showNerve;
         });
 
-        const mergeCanvas = document.getElementById('merge-canvas');
-        const ctx = mergeCanvas.getContext('2d');
-        function drawMergedFrame() {
-            mergeCanvas.width = videoElement.videoWidth || 1280;
-            mergeCanvas.height = videoElement.videoHeight || 720;
-            ctx.save(); ctx.scale(-1, 1);
-            ctx.drawImage(videoElement, -mergeCanvas.width, 0, mergeCanvas.width, mergeCanvas.height);
-            ctx.restore();
-            ctx.drawImage(renderer.domElement, 0, 0, mergeCanvas.width, mergeCanvas.height);
-        }
-
-        document.getElementById('btn-photo').addEventListener('click', () => {
-            drawMergedFrame();
-            const link = document.createElement('a');
-            link.download = 'PosAnatomy_Capture.png';
-            link.href = mergeCanvas.toDataURL('image/png');
-            link.click();
+        startBtn.addEventListener('click', () => {
+            startBtn.style.display = 'none';
+            loadingText.style.display = 'block';
+            loadModels();
         });
 
-        document.getElementById('btn-video').addEventListener('click', function() {
-            if (!isRecording) {
-                const stream = mergeCanvas.captureStream(30);
-                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-                recordedChunks = [];
-                mediaRecorder.ondataavailable = (e) => recordedChunks.push(e.data);
-                mediaRecorder.onstop = () => {
-                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-                    a.download = 'PosAnatomy_Video.webm'; a.click();
-                };
-                mediaRecorder.start(); isRecording = true;
-                this.innerText = "🛑 停止"; this.classList.add('recording');
-            } else {
-                mediaRecorder.stop(); isRecording = false;
-                this.innerText = "🎥 錄影"; this.classList.remove('recording');
-            }
-        });
-
+        // --- 渲染迴圈 ---
         function animate() {
             requestAnimationFrame(animate);
             renderer.render(scene, camera);
-            if (isRecording) drawMergedFrame();
         }
         animate();
 
+        // --- 視窗縮放處理 ---
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
