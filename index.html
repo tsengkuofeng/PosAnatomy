@@ -6,6 +6,7 @@
     <title>PosAnatomy - 手機 AR 透視鏡</title>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -13,39 +14,25 @@
 
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        /* 鏡頭畫面：滿版、不翻轉 (因為是後置鏡頭) */
-        #video { width: 100vw; height: 100vh; object-fit: cover; position: absolute; z-index: 1; top: 0; left: 0; }
-        /* 3D 畫布：疊在鏡頭上方，允許穿透點擊 */
-        canvas { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; }
 
-        #start-screen {
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0, 0, 0, 0.85); z-index: 9999;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            color: white; text-align: center; padding: 20px; box-sizing: border-box;
-            backdrop-filter: blur(5px);
-        }
+        /* 1. 最底層：鏡頭畫面 */
+        #video { width: 100vw; height: 100vh; object-fit: cover; position: absolute; z-index: 1; top: 0; left: 0; }
+
+        /* 2. 中間層：AI 節點畫布 */
+        #output_canvas { width: 100vw; height: 100vh; object-fit: cover; position: absolute; z-index: 2; top: 0; left: 0; pointer-events: none; }
+
+        /* 3. 最上層：3D 模型畫布 */
+        #three_canvas { position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none; }
+
+        #start-screen { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; padding: 20px; box-sizing: border-box; backdrop-filter: blur(5px); }
         .modal-box { background: rgba(30, 30, 30, 0.9); border: 1px solid gold; border-radius: 15px; padding: 30px; width: 85%; max-width: 400px; }
         .modal-box h2 { color: gold; margin-top: 0; }
         .modal-box p { font-size: 0.9rem; line-height: 1.5; color: #ccc; text-align: left; }
-
-        #start-btn {
-            background: gold; color: black; border: none; padding: 15px 30px; font-size: 1.1rem;
-            border-radius: 25px; cursor: pointer; font-weight: bold; margin-top: 20px; width: 100%;
-        }
-
+        #start-btn { background: gold; color: black; border: none; padding: 15px 30px; font-size: 1.1rem; border-radius: 25px; cursor: pointer; font-weight: bold; margin-top: 20px; width: 100%; }
         #loading-text { display: none; color: gold; font-weight: bold; margin-top: 15px; animation: pulse 1s infinite; }
-
-        /* 手機版底部控制列 */
-        #controls {
-            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-            display: none; background: rgba(0, 0, 0, 0.6); padding: 12px; border-radius: 25px;
-            z-index: 100; gap: 10px; border: 1px solid rgba(255,215,0,0.4);
-            backdrop-filter: blur(5px); display: flex; flex-wrap: wrap; justify-content: center; width: 90%; max-width: 350px;
-        }
+        #controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: none; background: rgba(0,0,0,0.6); padding: 12px; border-radius: 25px; z-index: 100; gap: 10px; border: 1px solid rgba(255,215,0,0.4); backdrop-filter: blur(5px); display: flex; flex-wrap: wrap; justify-content: center; width: 90%; max-width: 350px; }
         .btn { background: transparent; color: white; border: 1px solid white; padding: 10px 15px; border-radius: 20px; font-size: 0.9rem; transition: 0.3s; pointer-events: auto; }
         .btn.active { background: white; color: black; }
-
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
@@ -54,25 +41,25 @@
     <div id="start-screen">
         <div class="modal-box">
             <h2>📱 AR 解剖透視鏡</h2>
-            <p>1. 請允許瀏覽器使用相機權限。<br>
-               2. 使用<b>後置鏡頭</b>對準目標人物。<br>
-               3. 保持全身入鏡，光線明亮。<br>
-               ⚠️ <i>初次載入模型需約 10-20 秒，請耐心等候。</i></p>
+            <p>1. 允許相機權限。<br>2. 對準全身，保持光線明亮。<br>⚠️ <i>初次載入需等候 10-20 秒。</i></p>
             <button id="start-btn">開啟相機與載入模型</button>
             <div id="loading-text">資源載入中，請稍候...</div>
         </div>
     </div>
 
-    <div id="controls" style="display: none;">
+    <div id="controls">
         <button class="btn active" id="toggle-bone">🦴 骨骼</button>
         <button class="btn active" id="toggle-muscle">🥩 肌肉</button>
         <button class="btn active" id="toggle-nerve">⚡ 神經</button>
     </div>
 
     <video id="video" playsinline autoplay muted></video>
+    <canvas id="output_canvas"></canvas>
 
     <script>
         const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
         const startBtn = document.getElementById('start-btn');
         const startScreen = document.getElementById('start-screen');
         const controls = document.getElementById('controls');
@@ -84,9 +71,9 @@
 
         // --- Three.js 初始化 ---
         const scene = new THREE.Scene();
-        // 為了讓 AR 疊加更準確，我們根據手機螢幕比例設定相機
         const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.domElement.id = 'three_canvas';
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
@@ -97,7 +84,6 @@
         scene.add(dirLight);
 
         camera.position.z = 5;
-
         const anatomyGroup = new THREE.Group();
         scene.add(anatomyGroup);
 
@@ -113,20 +99,13 @@
 
             parts.forEach(part => {
                 loader.load(`./${part}.glb`, (gltf) => {
-                    const model = gltf.scene;
-                    models[part] = model;
-                    anatomyGroup.add(model);
+                    models[part] = gltf.scene;
+                    anatomyGroup.add(models[part]);
                     loadedCount++;
-
                     if(loadedCount === 3) {
-                        // 模型全數載入完畢，開啟相機
                         loadingText.innerText = "模型載入完成！啟動相機中...";
                         startCamera();
                     }
-                }, undefined, (error) => {
-                    console.error(`載入 ${part}.glb 失敗:`, error);
-                    loadingText.innerText = `❌ 載入 ${part} 失敗`;
-                    loadingText.style.color = "red";
                 });
             });
         }
@@ -135,21 +114,19 @@
         async function startCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-                    audio: false
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
                 });
                 videoElement.srcObject = stream;
-
                 videoElement.onloadedmetadata = () => {
                     videoElement.play();
+                    // 設定畫布解析度與影片一致
+                    canvasElement.width = videoElement.videoWidth;
+                    canvasElement.height = videoElement.videoHeight;
                     startScreen.style.display = 'none';
                     controls.style.display = 'flex';
-                    initPoseAnalysis(); // 開始 AI 辨識
+                    initPoseAnalysis();
                 };
-            } catch (err) {
-                alert("相機開啟失敗，請確認已給予權限！");
-                console.error(err);
-            }
+            } catch (err) { alert("相機開啟失敗！"); }
         }
 
         // --- MediaPipe 初始化 ---
@@ -157,81 +134,68 @@
             if (isPoseAnalyzing) return;
             isPoseAnalyzing = true;
             pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-
-            // 手機版效能考量，Complexity 設為 0 或 1
             pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
             pose.onResults(onResults);
 
             async function step() {
-                if (videoElement.readyState >= 2) {
-                    await pose.send({image: videoElement});
-                }
+                if (videoElement.readyState >= 2) await pose.send({image: videoElement});
                 if (isPoseAnalyzing) requestAnimationFrame(step);
             }
             step();
         }
 
-        // --- 核心對位邏輯 (AR 追蹤) ---
+        // --- 核心對位與繪製 ---
         function onResults(results) {
-            if (!results.poseLandmarks || anatomyGroup.children.length === 0) {
-                anatomyGroup.visible = false; // 沒抓到人就隱藏模型
-                return;
+            // 1. 繪製 MediaPipe 節點到畫布上
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.poseLandmarks) {
+                // 畫出綠色骨架連線與紅色節點
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
+                drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 2, radius: 3});
+
+                anatomyGroup.visible = true;
+
+                // 2. 移動 3D 模型立牌
+                const landmarks = results.poseLandmarks;
+                const leftShoulder = landmarks[11];
+                const rightShoulder = landmarks[12];
+
+                const midX = (leftShoulder.x + rightShoulder.x) / 2;
+                const midY = (leftShoulder.y + rightShoulder.y) / 2;
+
+                const screenAspect = window.innerHeight / window.innerWidth;
+                anatomyGroup.position.x = (midX - 0.5) * 8;
+                anatomyGroup.position.y = -(midY - 0.5) * 8 * screenAspect;
+
+                const shoulderWidth = Math.sqrt(Math.pow(leftShoulder.x - rightShoulder.x, 2) + Math.pow(leftShoulder.y - rightShoulder.y, 2));
+                const scaleFactor = shoulderWidth * 9.5;
+                anatomyGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+                const angle = Math.atan2(rightShoulder.y - leftShoulder.y, rightShoulder.x - leftShoulder.x);
+                anatomyGroup.rotation.z = -angle;
+            } else {
+                anatomyGroup.visible = false;
             }
-            anatomyGroup.visible = true;
-
-            const landmarks = results.poseLandmarks;
-            // 11 = 左肩, 12 = 右肩 (以畫面方向來看)
-            const leftShoulder = landmarks[11];
-            const rightShoulder = landmarks[12];
-
-            // 1. 計算中心點
-            const midX = (leftShoulder.x + rightShoulder.x) / 2;
-            const midY = (leftShoulder.y + rightShoulder.y) / 2;
-
-            // 2. 將 MediaPipe 座標 (0~1) 轉換為 Three.js 空間座標
-            // 這裡的乘數 (8, 6 等) 需根據你的模型原始大小做微調
-            const screenAspect = window.innerHeight / window.innerWidth;
-            anatomyGroup.position.x = (midX - 0.5) * 8;
-            anatomyGroup.position.y = -(midY - 0.5) * 8 * screenAspect;
-
-            // 3. 計算肩膀寬度來決定縮放比例
-            const shoulderWidth = Math.sqrt(Math.pow(leftShoulder.x - rightShoulder.x, 2) + Math.pow(leftShoulder.y - rightShoulder.y, 2));
-            const scaleFactor = shoulderWidth * 9.5; // 這裡的 9.5 是放大倍率，可自行微調
-            anatomyGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-
-            // 4. 計算身體傾斜角度
-            const angle = Math.atan2(rightShoulder.y - leftShoulder.y, rightShoulder.x - leftShoulder.x);
-            anatomyGroup.rotation.z = -angle;
+            canvasCtx.restore();
         }
 
-        // --- 按鈕事件綁定 ---
-        document.getElementById('toggle-bone').addEventListener('click', function() {
-            showBone = !showBone; this.classList.toggle('active');
-            if(models.bone) models.bone.visible = showBone;
-        });
-        document.getElementById('toggle-muscle').addEventListener('click', function() {
-            showMuscle = !showMuscle; this.classList.toggle('active');
-            if(models.muscle) models.muscle.visible = showMuscle;
-        });
-        document.getElementById('toggle-nerve').addEventListener('click', function() {
-            showNerve = !showNerve; this.classList.toggle('active');
-            if(models.nerve) models.nerve.visible = showNerve;
+        // --- UI 控制 ---
+        ['bone', 'muscle', 'nerve'].forEach(part => {
+            document.getElementById(`toggle-${part}`).addEventListener('click', function() {
+                this.classList.toggle('active');
+                if (part === 'bone') { showBone = !showBone; if(models.bone) models.bone.visible = showBone; }
+                if (part === 'muscle') { showMuscle = !showMuscle; if(models.muscle) models.muscle.visible = showMuscle; }
+                if (part === 'nerve') { showNerve = !showNerve; if(models.nerve) models.nerve.visible = showNerve; }
+            });
         });
 
-        startBtn.addEventListener('click', () => {
-            startBtn.style.display = 'none';
-            loadingText.style.display = 'block';
-            loadModels();
-        });
+        startBtn.addEventListener('click', () => { startBtn.style.display = 'none'; loadingText.style.display = 'block'; loadModels(); });
 
-        // --- 渲染迴圈 ---
-        function animate() {
-            requestAnimationFrame(animate);
-            renderer.render(scene, camera);
-        }
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
         animate();
 
-        // --- 視窗縮放處理 ---
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
