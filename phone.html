@@ -34,12 +34,24 @@
 
             peer.on('open', async (id) => {
                 try {
-                    // 開啟相機 (使用後置鏡頭，解析度設為 640x480 以兼顧畫質與低延遲傳輸)
+                    // 開啟相機 (使用後置鏡頭，解析度設為 640x480，並設定 30fps 以兼顧畫質與低延遲追蹤)
                     const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+                        video: {
+                            facingMode: 'environment',
+                            width: { ideal: 640 },
+                            height: { ideal: 480 },
+                            frameRate: { ideal: 30 }
+                        },
                         audio: false
                     });
+
                     videoEl.srcObject = stream;
+
+                    // 確保在 iOS Safari 上能順利自動播放
+                    videoEl.onloadedmetadata = () => {
+                        videoEl.play().catch(e => console.error("播放失敗:", e));
+                    };
+
                     statusEl.innerText = "相機已啟動，正在連線至電腦...";
 
                     // 撥號給電腦並傳送影像
@@ -62,8 +74,8 @@
                     // 防呆提示
                     if (err.name === 'NotAllowedError') {
                         alert("請允許瀏覽器使用相機權限！");
-                    } else if (location.protocol !== 'https:') {
-                        alert("安全性錯誤：手機必須透過 HTTPS 連線才能使用相機。請確認電腦端伺服器憑證設定。");
+                    } else if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+                        alert("安全性錯誤：手機必須透過 HTTPS 連線才能使用相機。請確認伺服器憑證設定。");
                     } else {
                         alert("發生未知的錯誤：" + err.message);
                     }

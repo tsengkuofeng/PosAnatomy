@@ -6,8 +6,10 @@
     <title>PosAnatomy - 雲端主控台</title>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
 
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 
@@ -76,6 +78,8 @@
     <div id="controls">
         <button class="btn active" id="toggle-bone">🦴 骨骼</button>
         <button class="btn active" id="toggle-muscle">🥩 肌肉</button>
+        <button class="btn active" id="toggle-nerve">⚡ 神經</button>
+        <div style="border-left: 1px solid #666; height: 20px; margin: 0 5px;"></div>
         <button class="btn btn-action" id="btn-photo">📸 拍照</button>
         <button class="btn btn-action btn-record" id="btn-video">🎥 錄影</button>
     </div>
@@ -90,9 +94,11 @@
         const step1 = document.getElementById('step-1');
         const qrContainer = document.getElementById('qr-container');
         const controls = document.getElementById('controls');
-        const loadingText = document.getElementById('loading-text');
 
-        let anatomyModel, showBone = true, showMuscle = true;
+        // 🟢 將模型分開儲存，並用一個 Group 包裝它們以便統一縮放
+        const models = { bone: null, muscle: null, nerve: null };
+        let showBone = true, showMuscle = true, showNerve = true;
+
         let isRecording = false, mediaRecorder, recordedChunks = [];
         let pose, isPoseAnalyzing = false;
 
@@ -108,36 +114,42 @@
         scene.add(pointLight);
         camera.position.z = 5;
 
-        function loadModel() {
+        // 🟢 建立一個大群組，用來承載三個系統
+        const anatomyGroup = new THREE.Group();
+        scene.add(anatomyGroup);
+
+        function loadModels() {
             const loader = new THREE.GLTFLoader();
-            loader.load('my_anatomy.glb', (gltf) => {
-                anatomyModel = gltf.scene;
-                anatomyModel.traverse((child) => {
-                    if (child.isMesh) {
-                        child.material.transparent = true;
-                        child.material.opacity = 0.7;
-                        let name = child.name.toLowerCase();
-                        child.userData.type = (name.includes('bone') || name.includes('skelet') || name.includes('spine')) ? 'bone' : 'muscle';
-                    }
+
+            // 🟢 設定 DRACO 解碼器
+            const dracoLoader = new THREE.DRACOLoader();
+            dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+            loader.setDRACOLoader(dracoLoader);
+
+            const parts = ['bone', 'muscle', 'nerve'];
+            parts.forEach(part => {
+                loader.load(`./${part}.glb`, (gltf) => {
+                    const model = gltf.scene;
+                    models[part] = model; // 存入字典方便之後開關
+                    anatomyGroup.add(model); // 加入統一管理的群組
+                    console.log(`✅ ${part}.glb 載入成功!`);
+                }, undefined, (error) => {
+                    console.error(`❌ 載入 ${part}.glb 失敗:`, error);
                 });
-                scene.add(anatomyModel);
             });
         }
 
         startBtn.addEventListener('click', () => {
             step1.style.display = 'none';
             qrContainer.style.display = 'block';
-            loadModel();
+            loadModels(); // 🟢 載入多個模型
 
-            // 🌟 產生 Peer ID 並自動建構 GitHub Pages 網址
             const myPeerId = "posanatomy-" + Math.floor(Math.random() * 10000);
             const peer = new Peer(myPeerId);
 
             peer.on('open', (id) => {
-                // 獲取目前目錄網址 (例如 https://user.github.io/repo/)
                 const currentUrl = window.location.href.split('?')[0].split('#')[0];
                 const cleanUrl = currentUrl.endsWith('/') ? currentUrl.slice(0, -1) : currentUrl;
-                // 如果 index.html 在根目錄，手機端就是 cleanUrl + /phone.html
                 const phoneUrl = `${cleanUrl}/phone.html?target_id=${id}`;
 
                 document.getElementById('qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(phoneUrl)}`;
@@ -173,31 +185,34 @@
         }
 
         function onResults(results) {
-            if (!results.poseLandmarks || !anatomyModel) return;
-            const left = results.poseLandmarks[11], right = results.poseLandmarks[12];
-            anatomyModel.position.x = -((left.x + right.x) / 2 - 0.5) * 8;
-            anatomyModel.position.y = -((left.y + right.y) / 2 - 0.5) * 6;
+            if (!results.poseLandmarks || anatomyGroup.children.length === 0) return;
+
+            // 使用肩膀節點來定位
+            const left = results.poseLandmarks[11];
+            const right = results.poseLandmarks[12];
+
+            // 🟢 對「整個群組」進行位移與縮放，確保骨骼/肌肉/神經不會分離
+            anatomyGroup.position.x = -((left.x + right.x) / 2 - 0.5) * 8;
+            anatomyGroup.position.y = -((left.y + right.y) / 2 - 0.5) * 6;
+
             const width = Math.sqrt(Math.pow(left.x - right.x, 2) + Math.pow(left.y - right.y, 2));
-            anatomyModel.scale.set(width * 10, width * 10, width * 10);
-            anatomyModel.rotation.z = Math.atan2(left.y - right.y, left.x - right.x);
+            anatomyGroup.scale.set(width * 10, width * 10, width * 10);
+            anatomyGroup.rotation.z = Math.atan2(left.y - right.y, left.x - right.x);
         }
 
+        // 🟢 更新按鈕事件，分別控制三個模型
         document.getElementById('toggle-bone').addEventListener('click', function() {
-            showBone = !showBone; this.classList.toggle('active'); updateVis();
+            showBone = !showBone; this.classList.toggle('active');
+            if(models.bone) models.bone.visible = showBone;
         });
         document.getElementById('toggle-muscle').addEventListener('click', function() {
-            showMuscle = !showMuscle; this.classList.toggle('active'); updateVis();
+            showMuscle = !showMuscle; this.classList.toggle('active');
+            if(models.muscle) models.muscle.visible = showMuscle;
         });
-
-        function updateVis() {
-            if(!anatomyModel) return;
-            anatomyModel.traverse((child) => {
-                if(child.isMesh) {
-                    if(child.userData.type === 'bone') child.visible = showBone;
-                    if(child.userData.type === 'muscle') child.visible = showMuscle;
-                }
-            });
-        }
+        document.getElementById('toggle-nerve').addEventListener('click', function() {
+            showNerve = !showNerve; this.classList.toggle('active');
+            if(models.nerve) models.nerve.visible = showNerve;
+        });
 
         const mergeCanvas = document.getElementById('merge-canvas');
         const ctx = mergeCanvas.getContext('2d');
